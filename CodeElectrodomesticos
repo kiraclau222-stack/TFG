@@ -1,0 +1,222 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# CONFIGURACIÓN
+
+HOUSE_ID = 661
+FILE = "15minute_data_austin.csv"
+T = 96
+
+# 1. CARGAR LOS DATOS ORIGINALES
+
+print(f"Analizando circuitos de la vivienda {HOUSE_ID}...")
+
+df = pd.read_csv(
+    FILE,
+    parse_dates=["local_15min"]
+)
+
+df = df[df["dataid"] == HOUSE_ID].copy()
+
+df = df.sort_values(
+    "local_15min"
+).reset_index(drop=True)
+
+# 2. IDENTIFICAR LOS CIRCUITOS
+
+exclude = [
+    "dataid",
+    "local_15min",
+    "grid",
+    "leg1v",
+    "leg2v",
+    "solar",
+    "solar2"
+]
+
+appliances = [
+    c for c in df.columns
+    if c not in exclude
+    and pd.api.types.is_numeric_dtype(df[c])
+]
+
+# Eliminar columnas que no tengan datos útiles
+appliances = [
+    c for c in appliances
+    if df[c].notna().any()
+]
+
+# 3. TRATAR VALORES FALTANTES
+
+df[appliances] = (
+    df[appliances]
+    .interpolate()
+    .bfill()
+    .ffill()
+)
+
+print("\nCircuitos analizados:")
+print(appliances)
+
+# 4. COMPROBAR QUE EXISTEN LAS ANOMALÍAS DEL CÓDIGO 3
+
+if "ANOMALIES" not in globals():
+    raise NameError(
+        "No existe ANOMALIES. Ejecuta primero el código 3."
+    )
+
+# Usamos las anomalías que TÚ introdujiste en el código 3
+anomalies = ANOMALIES
+
+print("\nVentanas anómalas introducidas:")
+print(anomalies)
+
+# 5. LOCALIZAR CORRECTAMENTE LAS ÚLTIMAS 200 VENTANAS
+
+num_windows = len(df) - T + 1
+
+if num_windows < 200:
+    raise ValueError(
+        f"La vivienda solo tiene {num_windows} ventanas disponibles."
+    )
+
+# Las ventanas analizadas en el código 3 son:
+# X_train[-200:]
+
+start_window = num_windows - 200
+
+# 6. ANALIZAR CADA ANOMALÍA
+
+resultados = []
+
+for idx in anomalies:
+
+    # Índice real de la ventana dentro de todo el dataset
+    ventana_inicio = start_window + idx
+    ventana_fin = ventana_inicio + T
+
+    if ventana_inicio < 0 or ventana_fin > len(df):
+        print(
+            f"No se puede analizar la ventana {idx}."
+        )
+        continue
+
+    ventana = df.iloc[
+        ventana_inicio:ventana_fin
+    ]
+
+    
+    # Consumo medio de cada circuito
+  
+
+    consumo = ventana[appliances].mean()
+
+    # Ordenar circuitos de mayor a menor consumo
+    consumo_ordenado = consumo.sort_values(
+        ascending=False
+    )
+
+    # Circuito con mayor consumo
+    principal = consumo_ordenado.index[0]
+    valor_principal = consumo_ordenado.iloc[0]
+
+    resultados.append({
+        "Ventana": int(idx),
+        "Electrodoméstico principal": principal,
+        "Consumo medio": float(valor_principal)
+    })
+# 7. TABLA DE RESULTADOS
+
+
+resultados_df = pd.DataFrame(resultados)
+
+print("\n==============================================")
+print("ANÁLISIS DE LAS ANOMALÍAS")
+print("==============================================")
+
+if len(resultados_df) > 0:
+
+    print(
+        resultados_df.to_string(
+            index=False
+        )
+    )
+
+else:
+
+    print("No se han podido analizar las anomalías.")
+
+
+# 8. MOSTRAR EL DESGLOSE COMPLETO
+
+
+print("\n==============================================")
+print("DESGLOSE POR CIRCUITO")
+print("==============================================")
+
+for idx in anomalies:
+
+    ventana_inicio = start_window + idx
+    ventana_fin = ventana_inicio + T
+
+    if ventana_fin > len(df):
+        continue
+
+    ventana = df.iloc[
+        ventana_inicio:ventana_fin
+    ]
+
+    consumo = (
+        ventana[appliances]
+        .mean()
+        .sort_values(ascending=False)
+    )
+
+    print(f"\nVentana {idx}:")
+    print(consumo.head(10).to_string())
+
+# 9. GRÁFICA
+
+if len(resultados_df) > 0:
+
+    plt.figure(
+        figsize=(9, 4),
+        dpi=300
+    )
+
+    plt.bar(
+        resultados_df["Ventana"].astype(str),
+        resultados_df["Consumo medio"],
+        color="royalblue",
+        edgecolor="black"
+    )
+
+    plt.xlabel(
+        "Ventana anómala"
+    )
+
+    plt.ylabel(
+        "Consumo medio"
+    )
+
+    plt.title(
+        f"Vivienda {HOUSE_ID} - "
+        "Circuito con mayor consumo en las anomalías"
+    )
+
+    plt.grid(
+        axis="y",
+        linestyle="--",
+        alpha=0.4
+    )
+
+    plt.tight_layout()
+
+    plt.savefig(
+        f"figura_5_4_appliances_{HOUSE_ID}.png",
+        dpi=300,
+        bbox_inches="tight"
+    )
+
+    plt.show()
