@@ -1,0 +1,220 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# CONFIGURACIÓN
+
+HOUSE_ID = 661
+ANOMALIES = [1, 10, 29, 42]
+
+# Factor utilizado para modificar artificialmente la ventana
+ANOMALY_FACTOR = 15.0
+
+# 1. COMPROBAR DATOS DEL CÓDIGO 1
+
+if "X" not in globals() or "model" not in globals():
+    raise NameError(
+        "No existen X o model. Ejecuta primero el código 1."
+    )
+# 2. SELECCIONAR LAS ÚLTIMAS 200 VENTANAS
+
+X_test = X[-200:].copy()
+
+# 3. CALCULAR EL ERROR DE RECONSTRUCCIÓN DEL ENTRENAMIENTO
+
+X_train_pred = model.predict(
+    X,
+    batch_size=256,
+    verbose=0
+)
+
+train_mse = np.mean(
+    (X - X_train_pred) ** 2,
+    axis=(1, 2)
+)
+
+# 4. CALCULAR EL UMBRAL DE DETECCIÓN
+
+mu = np.mean(train_mse)
+sigma = np.std(train_mse)
+
+K = 0.5
+
+tau = mu + K * sigma
+
+# 5. INYECTAR LAS ANOMALÍAS ARTIFICIALES
+
+X_test_anomalous = X_test.copy()
+
+for i in ANOMALIES:
+
+    if 0 <= i < len(X_test_anomalous):
+
+        X_test_anomalous[i] = np.clip(
+            X_test_anomalous[i] * ANOMALY_FACTOR,
+            0,
+            1
+        )
+
+    else:
+        raise IndexError(
+            f"La ventana anómala {i} está fuera del rango "
+            f"0-{len(X_test_anomalous)-1}."
+        )
+# 6. RECONSTRUIR LAS VENTANAS MODIFICADAS
+
+X_test_pred = model.predict(
+    X_test_anomalous,
+    batch_size=256,
+    verbose=0
+)
+
+# 7. CALCULAR EL ERROR DE RECONSTRUCCIÓN
+
+test_mse = np.mean(
+    (X_test_anomalous - X_test_pred) ** 2,
+    axis=(1, 2)
+)
+
+# 8. DETECTAR ANOMALÍAS
+
+detected = test_mse > tau
+
+detected_indices = np.where(detected)[0]
+
+correctly_detected = [
+    i for i in ANOMALIES
+    if detected[i]
+]
+
+# 9. MOSTRAR RESULTADOS
+
+print("\n======================================")
+print("RESULTADO DE LA DETECCIÓN")
+print("======================================")
+
+print(f"Vivienda: {HOUSE_ID}")
+print(f"Ventanas analizadas: {len(X_test)}")
+print(f"Anomalías inyectadas: {ANOMALIES}")
+
+print(f"\nMedia del error (μ): {mu:.6f}")
+print(f"Desviación típica (σ): {sigma:.6f}")
+print(f"Factor K: {K}")
+print(f"Umbral de anomalía (τ): {tau:.6f}")
+
+print(
+    f"\nAnomalías detectadas: "
+    f"{len(detected_indices)}"
+)
+
+print(
+    f"Índices detectados: "
+    f"{detected_indices.tolist()}"
+)
+
+print(
+    f"Anomalías correctamente detectadas: "
+    f"{correctly_detected}"
+)
+
+detection_rate = (
+    len(correctly_detected) /
+    len(ANOMALIES)
+) * 100
+
+print(
+    f"Tasa de detección: "
+    f"{detection_rate:.2f}%"
+)
+
+# 10. CONSUMO MEDIO DE CADA VENTANA
+
+real_consumption = X_test_anomalous.mean(
+    axis=(1, 2)
+)
+
+reconstructed_consumption = X_test_pred.mean(
+    axis=(1, 2)
+)
+
+# 11. GRÁFICA
+
+plt.figure(
+    figsize=(11, 5),
+    dpi=300
+)
+
+plt.plot(
+    real_consumption,
+    linewidth=1.5,
+    label="Consumo modificado"
+)
+
+plt.plot(
+    reconstructed_consumption,
+    linestyle="--",
+    linewidth=1.5,
+    label="Reconstrucción"
+)
+
+# Anomalías detectadas
+
+if len(detected_indices) > 0:
+
+    plt.scatter(
+        detected_indices,
+        real_consumption[detected_indices],
+        s=55,
+        zorder=5,
+        label="Anomalía detectada"
+    )
+
+# Anomalías inyectadas
+
+plt.scatter(
+    ANOMALIES,
+    real_consumption[ANOMALIES],
+    facecolors="none",
+    edgecolors="purple",
+    linewidths=1.8,
+    s=100,
+    zorder=6,
+    label="Anomalía inyectada"
+)
+
+# 12. FORMATO DE LA GRÁFICA
+
+plt.title(
+    f"Vivienda {HOUSE_ID} - "
+    "Detección de anomalías mediante autoencoder LSTM"
+)
+
+plt.xlabel("Ventana temporal")
+plt.ylabel("Consumo normalizado")
+
+plt.grid(
+    True,
+    linestyle="--",
+    alpha=0.4
+)
+
+plt.legend()
+
+plt.tight_layout()
+
+# 13. GUARDAR FIGURA
+
+output_file = (
+    f"figura_5_3_anomalies_{HOUSE_ID}.png"
+)
+
+plt.savefig(
+    output_file,
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.show()
+
+print(
+    f"\nFigura guardada como: {output_file}"
+)
