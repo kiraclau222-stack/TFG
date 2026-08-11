@@ -1,0 +1,98 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# CONFIGURACIÓN
+
+HOUSE_ID = 661
+K = 0.5
+
+# 1. COMPROBAR QUE EXISTEN LOS DATOS DEL CÓDIGO 1
+
+if 'X' not in globals():
+    raise NameError(
+        "No existe X. Ejecuta primero el código 1 de entrenamiento."
+    )
+
+# 2. RECONSTRUIR LAS VENTANAS DE ENTRENAMIENTO
+
+X_pred = model.predict(
+    X,
+    batch_size=256,
+    verbose=0
+)
+
+# 3. CALCULAR EL ERROR MSE POR VENTANA
+
+train_mse = np.mean(
+    (X - X_pred) ** 2,
+    axis=(1, 2)
+)
+
+
+# 4. CALCULAR MEDIA, DESVIACIÓN Y UMBRAL
+
+mu = np.mean(train_mse)
+sigma = np.std(train_mse)
+
+tau = mu + K * sigma
+
+print("\n======================================")
+print(f"Vivienda: {HOUSE_ID}")
+print("======================================")
+print(f"Media del error (μ): {mu:.6f}")
+print(f"Desviación típica (σ): {sigma:.6f}")
+print(f"Factor k: {K}")
+print(f"Umbral de anomalía (τ): {tau:.6f}")
+
+# 5. HISTOGRAMA
+
+plt.figure(figsize=(8, 5), dpi=300)
+
+plt.hist(
+    train_mse,
+    bins=40,
+    alpha=0.75,
+    edgecolor="black",
+    label="Error de reconstrucción"
+)
+
+plt.axvline(
+    tau,
+    color="red",
+    linestyle="--",
+    linewidth=2,
+    label=f"Umbral τ = {tau:.4f}"
+)
+
+plt.axvline(
+    mu,
+    color="darkorange",
+    linestyle=":",
+    linewidth=2,
+    label=f"Media μ = {mu:.4f}"
+)
+
+plt.title(
+    f"Vivienda {HOUSE_ID} - Distribución del error de reconstrucción"
+)
+
+plt.xlabel("Error de reconstrucción (MSE)")
+plt.ylabel("Frecuencia")
+
+plt.grid(
+    True,
+    linestyle="--",
+    alpha=0.4
+)
+
+plt.legend()
+
+plt.tight_layout()
+
+plt.savefig(
+    f"figura_5_2_error_distribution_{HOUSE_ID}.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.show()
