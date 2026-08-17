@@ -1,0 +1,231 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import xarray as xr
+
+# ============================================================
+# CONFIGURACIÓN
+# ============================================================
+
+HOUSE_ID = 4934
+FILE = "15minute_data_california.csv"
+WEATHER_FILE = "data_california.grib"
+T = 96
+
+# Lista de variables permitidas para el análisis
+ALLOWED_APPLIANCES = [
+    "use", "air1", "dryer1", "clotheswasher1", "dishwasher1",
+    "microwave1", "refrigerator1", "oven1", "range1", "furnace1"
+]
+
+# ============================================================
+# 1. CARGAR LOS DATOS ORIGINALES DE CONSUMO
+# ============================================================
+
+print(f"Analizando circuitos de la vivienda {HOUSE_ID}...")
+
+df = pd.read_csv(
+    FILE,
+    parse_dates=["local_15min"]
+)
+
+df = df[df["dataid"] == HOUSE_ID].copy()
+
+df = df.sort_values(
+    "local_15min"
+).reset_index(drop=True)
+
+# ============================================================
+# 2. CARGAR Y PREPARAR LA METEOROLOGÍA (GRIB)
+# ============================================================
+
+print("Cargando datos meteorológicos...")
+
+try:
+    weather = xr.open_dataset(
+        WEATHER_FILE,
+        engine="cfgrib",
+        backend_kwargs={"indexpath": ""}
+    )
+except Exception:
+    weather = xr.open_dataset(
+        WEATHER_FILE,
+        engine="cfgrib"
+    )
+
+temperature = weather["t2m"] - 273.15
+dewpoint = weather["d2m"] - 273.15
+
+humidity = 100 * np.exp(
+    (17.625 * dewpoint / (243.04 + dewpoint))
+    -
+    (17.625 * temperature / (243.04 + temperature))
+)
+humidity = humidity.clip(min=0, max=100)
+
+weather_ds = xr.Dataset({
+    "temperature": temperature,
+    "humidity": humidity
+})
+
+weather_df = weather_ds.to_dataframe().reset_index()
+if "spatial_ref" in weather_df.columns:
+    weather_df = weather_df.drop(columns=["spatial_ref"])
+
+cols_to_keep = [c for c in ["time", "temperature", "humidity"] if c in weather_df.columns]
+weather_df = weather_df[cols_to_keep].drop_duplicates(subset=["time"]).sort_values("time").reset_index(drop=True)
+
+weather_df = weather_df.set_index("time")
+weather_15min = weather_df.resample("15min").interpolate().reset_index()
+weather_15min = weather_15min.rename(columns={"time": "local_15min"})
+
+# ============================================================
+# 3. UNIFICAR FECHAS Y ZONAS HORARIAS
+# ============================================================
+
+df["local_15min"] = pd.to_datetime(df["local_15min"], errors="coerce")
+weather_15min["local_15min"] = pd.to_datetime(weather_15min["local_15min"], errors="coerce")
+
+df = df.dropna(subset=["local_15min"]).copy()
+weather_15min = weather_15min.dropna(subset=["local_15min"]).copy()
+
+df["local_15min"] = pd.to_datetime(df["local_15min"]).dt.tz_localize(None)
+weather_15min["local_15min"] = pd.to_datetime(weather_15min["local_15min"]).dt.tz_localize(None)
+
+df = df.sort_values("local_15min").reset_index(drop=True)
+weather_15min = weather_15min.sort_values("local_15min").reset_index(drop=True)
+
+df = pd.merge_asof(
+    df,
+    weather_15min,
+    on="local_15min",
+    direction="nearest",
+    tolerance=pd.Timedelta("30min")
+)
+
+# ============================================================
+# 4. IDENTIFICAR LOS CIRCUITOS (FILTRADO POR LISTA BLANCA)
+# ============================================================
+
+appliances = [
+    c for c in ALLOWED_APPLIANCES
+    if c in df.columns and pd.api.types.is_numeric_dtype(df[c])
+]
+
+# Eliminar columnas que no tengan datos útiles
+appliances = [c for c in appliances if df[c].notna().any()]
+
+# ============================================================
+# 5. TRATAR VALORES FALTANTES Y NEGATIVOS
+# ============================================================
+
+df[appliances] = (
+    df[appliances]
+    .interpolate()
+    .bfill()
+    .ffill()
+    .clip(lower=0) # Evita valores negativos
+)
+
+has_weather = "temperature" in df.columns and "humidity" in df.columns
+
+print("\nCircuitos analizados:")
+print(appliances)
+
+# ============================================================
+# 6. COMPROBAR QUE EXISTEN LAS ANOMALÍAS
+# ============================================================
+
+if "ANOMALIES" not in globals():
+    raise NameError("No existe ANOMALIES. Ejecuta primero el código 3.")
+
+anomalies = ANOMALIES
+print("\nVentanas anómalas introducidas:")
+print(anomalies)
+
+# ============================================================
+# 7. LOCALIZAR VENTANAS Y ANALIZAR (CONSUMO + CLIMA)
+# ============================================================
+
+num_windows = len(df) - T + 1
+if num_windows < 200:
+    raise ValueError(f"La vivienda solo tiene {num_windows} ventanas disponibles.")
+
+start_window = num_windows - 200
+resultados = []
+
+for idx in anomalies:
+    ventana_inicio = start_window + idx
+    ventana_fin = ventana_inicio + T
+
+    if ventana_inicio < 0 or ventana_fin > len(df):
+        continue
+
+    ventana = df.iloc[ventana_inicio:ventana_fin]
+
+    consumo = ventana[appliances].mean()
+    consumo_ordenado = consumo.sort_values(ascending=False)
+
+    principal = consumo_ordenado.index[0]
+    valor_principal = consumo_ordenado.iloc[0]
+
+    fila_resultado = {
+        "Ventana": int(idx),
+        "Electrodoméstico principal": principal,
+        "Consumo medio": float(valor_principal)
+    }
+
+    if has_weather:
+        fila_resultado["Temperatura media (°C)"] = float(ventana["temperature"].mean())
+        fila_resultado["Humedad media (%)"] = float(ventana["humidity"].mean())
+
+    resultados.append(fila_resultado)
+
+# ============================================================
+# 8. TABLA DE RESULTADOS
+# ============================================================
+
+resultados_df = pd.DataFrame(resultados)
+print("\n==============================================")
+print("ANÁLISIS DE LAS ANOMALÍAS (CONSUMO Y CLIMA)")
+print("==============================================")
+
+if len(resultados_df) > 0:
+    print(resultados_df.to_string(index=False))
+
+# ============================================================
+# 9. MOSTRAR EL DESGLOSE COMPLETO
+# ============================================================
+
+print("\n==============================================")
+print("DESGLOSE POR CIRCUITO Y CLIMA")
+print("==============================================")
+
+for idx in anomalies:
+    ventana_inicio = start_window + idx
+    ventana_fin = ventana_inicio + T
+    if ventana_fin > len(df): continue
+    ventana = df.iloc[ventana_inicio:ventana_fin]
+    consumo = ventana[appliances].mean().sort_values(ascending=False)
+    print(f"\nVentana {idx}:")
+    print(consumo.to_string())
+    if has_weather:
+        print(f"Temperatura: {ventana['temperature'].mean():.2f} °C | Humedad: {ventana['humidity'].mean():.2f}%")
+
+# ============================================================
+# 10. GRÁFICA DOBLE
+# ============================================================
+
+if len(resultados_df) > 0:
+    fig, ax1 = plt.subplots(figsize=(10, 4.5), dpi=300)
+    ax1.bar(resultados_df["Ventana"].astype(str), resultados_df["Consumo medio"], color="royalblue", alpha=0.8, edgecolor="black")
+    ax1.set_ylabel("Consumo medio", color="royalblue")
+
+    if has_weather:
+        ax2 = ax1.twinx()
+        ax2.plot(resultados_df["Ventana"].astype(str), resultados_df["Temperatura media (°C)"], color="crimson", marker="o", linewidth=2)
+        ax2.set_ylabel("Temperatura media (°C)", color="crimson")
+
+    plt.title(f"Vivienda {HOUSE_ID} - Anomalías")
+    plt.tight_layout()
+    plt.show()
