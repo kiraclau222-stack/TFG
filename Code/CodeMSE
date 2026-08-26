@@ -11,23 +11,30 @@ from tensorflow.keras.layers import LSTM, RepeatVector, TimeDistributed, Dense
 from tensorflow.keras.callbacks import EarlyStopping
 
 
-
+# ============================================================
 # CONFIGURACIÓN
+# ============================================================
 
 HOUSE_ID = 661
 FILE = "15minute_data_austin.csv"
 
-T = 96                    # 96 intervalos de 15 minutos = 24 horas
+T = 96                      # 96 intervalos de 15 minutos = 24 horas
 EPOCHS = 15
 BATCH_SIZE = 256
 SEED = 42
 
+
+# ============================================================
 # REPRODUCIBILIDAD
+# ============================================================
 
 np.random.seed(SEED)
 tf.random.set_seed(SEED)
 
+
+# ============================================================
 # 1. CARGAR DATOS
+# ============================================================
 
 print(f"Cargando vivienda {HOUSE_ID}...")
 
@@ -50,35 +57,48 @@ if df.empty:
 print(f"Registros encontrados: {len(df)}")
 
 
-# 2. IDENTIFICAR CIRCUITOS DE CONSUMO
+# ============================================================
+# 2. SELECCIONAR SOLO 'use' Y ELECTRODOMÉSTICOS PRINCIPALES
+# ============================================================
 
-
-exclude = [
-    "dataid",
-    "local_15min",
-    "grid",
-    "leg1v",
-    "leg2v",
-    "solar",
-    "solar2"
+main_appliances = [
+    "air1",
+    "clotheswasher1",
+    "furnace1",
+    "dishwasher1",
+    "drye1",
+    "refrigerator1",
+    "range1",
+    "oven1",
+    "use"
 ]
 
 circuit_cols = [
-    column
-    for column in df.columns
-    if column not in exclude
-    and pd.api.types.is_numeric_dtype(df[column])
+    col for col in main_appliances
+    if col in df.columns and pd.api.types.is_numeric_dtype(df[col])
 ]
 
 if not circuit_cols:
     raise ValueError(
-        "No se encontraron circuitos numéricos de consumo."
+        "No se encontraron las columnas especificadas en el dataset."
     )
 
-print(f"Número de circuitos utilizados: {len(circuit_cols)}")
+print(f"Columnas principales utilizadas: {circuit_cols}")
 
 
-# 3. TRATAMIENTO DE VALORES FALTANTES
+# ============================================================
+# 3. TRATAMIENTO DE VALORES FALTANTES (CON ANÁLISIS PREVIO)
+# ============================================================
+
+missing_data = df[circuit_cols].isnull().sum()
+missing_percentage = (missing_data / len(df)) * 100
+
+print("\n--- ANÁLISIS DE VALORES AUSENTES POR CIRCUITO ---")
+missing_df = pd.DataFrame({
+    "Valores Nulos": missing_data,
+    "Porcentaje (%)": missing_percentage
+})
+print(missing_df)
 
 df[circuit_cols] = (
     df[circuit_cols]
@@ -88,9 +108,13 @@ df[circuit_cols] = (
 )
 
 
-# 4. CALCULAR CONSUMO TOTAL DE LA VIVIENDA
+# ============================================================
+# 4. ASEGURAR Y COMPROBAR CONSUMO TOTAL DE LA VIVIENDA ('use')
+# ============================================================
 
-df["use"] = df[circuit_cols].sum(axis=1)
+if "use" not in df.columns:
+    appliance_cols = [c for c in circuit_cols if c != "use"]
+    df["use"] = df[appliance_cols].sum(axis=1)
 
 series = df["use"].to_numpy(
     dtype=np.float32
@@ -98,7 +122,10 @@ series = df["use"].to_numpy(
 
 print(f"Registros de consumo: {len(series)}")
 
+
+# ============================================================
 # 5. NORMALIZACIÓN
+# ============================================================
 
 scaler = MinMaxScaler()
 
@@ -109,7 +136,9 @@ series_scaled = scaler.fit_transform(
 print("Normalización completada.")
 
 
+# ============================================================
 # 6. CREAR VENTANAS TEMPORALES
+# ============================================================
 
 if len(series_scaled) < T:
     raise ValueError(
@@ -130,8 +159,9 @@ X = X[
 print(f"Ventanas creadas: {X.shape}")
 
 
+# ============================================================
 # 7. MODELO LSTM AUTOENCODER
-
+# ============================================================
 
 model = Sequential([
     LSTM(
@@ -152,7 +182,9 @@ model = Sequential([
 ])
 
 
+# ============================================================
 # 8. COMPILACIÓN
+# ============================================================
 
 model.compile(
     optimizer="adam",
@@ -160,7 +192,9 @@ model.compile(
 )
 
 
+# ============================================================
 # 9. EARLY STOPPING
+# ============================================================
 
 early_stop = EarlyStopping(
     monitor="val_loss",
@@ -169,7 +203,10 @@ early_stop = EarlyStopping(
     verbose=1
 )
 
+
+# ============================================================
 # 10. ENTRENAMIENTO
+# ============================================================
 
 print("\nIniciando entrenamiento...")
 
@@ -184,7 +221,10 @@ history = model.fit(
     shuffle=False
 )
 
+
+# ============================================================
 # 11. RESULTADOS DEL ENTRENAMIENTO
+# ============================================================
 
 epochs_ran = len(
     history.history["loss"]
@@ -216,7 +256,10 @@ else:
         f"{EPOCHS} épocas establecidas."
     )
 
+
+# ============================================================
 # 12. GRÁFICA DE LA FUNCIÓN DE PÉRDIDA
+# ============================================================
 
 plt.figure(
     figsize=(8, 5),
@@ -278,7 +321,10 @@ plt.xlim(
 
 plt.tight_layout()
 
+
+# ============================================================
 # 13. GUARDAR FIGURA
+# ============================================================
 
 output_file = (
     f"figura_5_1_loss_{HOUSE_ID}.png"
